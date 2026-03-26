@@ -139,7 +139,7 @@ ZSTDLIB_API const char* ZSTD_versionString(void);
  ***************************************/
 
 /* All magic numbers are supposed read/written to/from files/memory using little-endian convention */
-#define ZSTD_MAGICNUMBER            0xFD2FB528    /* valid since v0.8.0 */
+#define ZSTD_MAGICNUMBER            0x4349425A    /* 0x4349425A for ZBIC, 0xFD2FB528 for zstd (valid since v0.8.0) */
 #define ZSTD_MAGIC_DICTIONARY       0xEC30A437    /* valid since v0.7.0 */
 #define ZSTD_MAGIC_SKIPPABLE_START  0x184D2A50    /* all 16 values, from 0x184D2A50 to 0x184D2A5F, signal the beginning of a skippable frame */
 #define ZSTD_MAGIC_SKIPPABLE_MASK   0xFFFFFFF0
