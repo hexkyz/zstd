@@ -17,7 +17,8 @@ LIB = $(LIBDIR)/libzstd.a
 default: all
 
 .PHONY: all
-all: simple_compression simple_decompression simple_decompression_zbic \
+all: simple_compression simple_decompression \
+    simple_compression_zbic simple_decompression_zbic \
 	multiple_simple_compression \
 	dictionary_compression dictionary_decompression \
 	streaming_compression streaming_decompression \
@@ -31,6 +32,9 @@ simple_compression : $(LIB)
 
 simple_decompression.o: common.h
 simple_decompression : $(LIB)
+
+simple_compression_zbic.o: common.h
+simple_compression_zbic : $(LIB)
 
 simple_decompression_zbic.o: common.h
 simple_decompression_zbic : $(LIB)
@@ -60,7 +64,8 @@ streaming_memory_usage : $(LIB)
 .PHONY:clean
 clean:
 	@$(RM) core *.o tmp* result* *.zst \
-        simple_compression simple_decompression simple_decompression_zbic \
+        simple_compression simple_decompression \
+        simple_compression_zbic simple_decompression_zbic \
         multiple_simple_compression \
         dictionary_compression dictionary_decompression \
         streaming_compression streaming_decompression \

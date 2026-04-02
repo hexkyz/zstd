@@ -230,8 +230,8 @@ size_t FSE_NCountWriteBound(unsigned maxSymbolValue, unsigned tableLog)
     return maxSymbolValue ? maxHeaderSize : FSE_NCOUNTBOUND;  /* maxSymbolValue==0 ? use default */
 }
 
-static size_t
-FSE_writeNCount_generic (void* header, size_t headerBufferSize,
+FORCE_INLINE_TEMPLATE
+size_t FSE_writeNCount_normal (void* header, size_t headerBufferSize,
                    const short* normalizedCounter, unsigned maxSymbolValue, unsigned tableLog,
                          unsigned writeIsSafe)
 {
@@ -326,19 +326,163 @@ FSE_writeNCount_generic (void* header, size_t headerBufferSize,
     return (size_t)(out-ostart);
 }
 
+FORCE_INLINE_TEMPLATE
+size_t FSE_writeNCount_bic(void* header, size_t headerBufferSize,
+                   const short* normalizedCounter, unsigned maxSymbolValue, unsigned tableLog,
+                         unsigned writeIsSafe, unsigned useLowProbCount)
+{
+    U32 bicCounter[260];
+    ZSTD_memset(bicCounter, 0, sizeof(bicCounter));
+    BYTE rawData[0x80];
+    ZSTD_memset(rawData, 0, sizeof(rawData));
+    
+    U64 i, j, k, l = 0;
+    size_t rawDataSize = 0;
+    
+    U32 remaining = 1 << tableLog;
+    U32 countDist = 0;
+    U32 charNumLeft = 0;
+    int accCount = 0;
+    
+    U32 *bc = &bicCounter[1];
+    do {
+        short count = *normalizedCounter++;
+        countDist += count + useLowProbCount;
+        *bc++ = countDist;
+        if (count < 0) count = -count;
+        accCount += count;
+        ++charNumLeft;
+    } while (charNumLeft <= maxSymbolValue);
+    
+    if ((U32)accCount != remaining) return ERROR(corruption_detected);
+    
+    /* Strictly calculate the next power of 2. */ 
+    U32 maxSymbolValueNextPow2 = maxSymbolValue;
+    maxSymbolValueNextPow2 |= (maxSymbolValueNextPow2 >> 1);
+    maxSymbolValueNextPow2 |= (maxSymbolValueNextPow2 >> 2);
+    maxSymbolValueNextPow2 |= (maxSymbolValueNextPow2 >> 4);
+    maxSymbolValueNextPow2 |= (maxSymbolValueNextPow2 >> 8);
+    maxSymbolValueNextPow2 |= (maxSymbolValueNextPow2 >> 16);
+    maxSymbolValueNextPow2++;
+    
+    if (maxSymbolValue + 1 < maxSymbolValueNextPow2) {
+        U64 maxSymbolValueDist = maxSymbolValueNextPow2 - 1 - maxSymbolValue;
+        bc = &bicCounter[maxSymbolValue + 2];
+        while (maxSymbolValueDist) {
+            *bc++ = countDist;
+            --maxSymbolValueDist;
+        }
+    }
+    
+    bicCounter[0] = 0;
+    U32 charNumNextPow2 = (0x100 - maxSymbolValueNextPow2);
+    
+    /* Perform interpolative encoding (cumulative).
+     * l encodes the symbol occurrence table as an U64.
+     */
+    U32 bicCount = 0xFF;
+    U64 bicTableOffset = 0x300 - 1;
+    if (charNumNextPow2 <= 0xFF) {
+        do {
+            U32 btLastIndex = BIC_table[bicTableOffset - 0];
+            U32 btFirstIndex = BIC_table[bicTableOffset - 1];
+            U32 btMiddleIndex = BIC_table[bicTableOffset - 2];
+            U32 bcFirstIndexEntry = bicCounter[btFirstIndex];
+            U32 bcLastIndexEntry = bicCounter[btLastIndex];
+            
+            if (bcFirstIndexEntry != bcLastIndexEntry) {
+                /* Do recursive interpolative encoding.
+                 * l is updated by l * (lastIndexEntry - firstIndexEntry + 1) + (middleIndexEntry - firstIndexEntry).
+                */
+                U64 lNext = l;
+                U64 lSize = (bcLastIndexEntry - bcFirstIndexEntry + 1);
+                U64 lEntry = (bicCounter[btMiddleIndex] - bcFirstIndexEntry);
+                for (l = lEntry + lSize * lNext; ((l >> 32) & 0xFFFFFFFF) > 0x10000; l = lEntry + lSize * lNext) {
+                    *(rawData + rawDataSize++) = lNext;
+                    lNext >>= 8;
+                    if (rawDataSize >= 0x80) return ERROR(dstSize_tooSmall);
+                }
+            }
+            
+            --bicCount;
+            bicTableOffset -= 3;
+        } while (bicCount >= charNumNextPow2);
+    }
+    
+    if (useLowProbCount) countDist += -1 - maxSymbolValue;
+    if (countDist > remaining) return ERROR(parameter_outOfBound);
+    
+    U64 charTable = countDist - 1;
+    for (i = charTable + l * remaining; ((i >> 32) & 0xFFFFFFFF) > 0x10000; i = charTable + l * remaining) {
+        *(rawData + rawDataSize++) = l;
+        l >>= 8;
+        if (rawDataSize >= 0x80) return ERROR(dstSize_tooSmall);
+    }
+    
+    U64 encodedCharTable = tableLog - 5;
+    if (encodedCharTable >= 8) return ERROR(parameter_outOfBound);
+    
+    for (j = encodedCharTable + 8 * i; ((j >> 32) & 0xFFFFFFFF) > 0x10000; j = encodedCharTable + 8 * i) {
+        *(rawData + rawDataSize++) = i;
+        i >>= 8;
+        if (rawDataSize >= 0x80) return ERROR(dstSize_tooSmall);
+    }
+    
+    U32 charNum = maxSymbolValue - 1;
+    if (charNum >= 0x34) return ERROR(dstSize_tooSmall);
+    
+    for (k = charNum + 0x34 * j; ((k >> 32) & 0xFFFFFFFF) > 0x10000; k = charNum + 0x34 * j) {
+        *(rawData + rawDataSize++) = j; 
+        j >>= 8;
+        if (rawDataSize >= 0x80) return ERROR(dstSize_tooSmall);
+    }
+    
+    size_t safeRawDataSize = rawDataSize;
+    for (safeRawDataSize = rawDataSize; k; safeRawDataSize = rawDataSize) {
+        *(rawData + rawDataSize++) = k;
+        k >>= 8;
+        if (rawDataSize >= 0x80) return ERROR(dstSize_tooSmall);
+    }
+    
+    size_t dataSize = 0;    
+    if (writeIsSafe) {
+        dataSize = safeRawDataSize + 1;
+    } else {
+        dataSize = rawDataSize + 1;
+        if (dataSize >= headerBufferSize) return ERROR(dstSize_tooSmall);
+    }
+    
+    BYTE* out = (BYTE*) header;
+    *out = ((useLowProbCount << 7) | (rawDataSize & 0x7F));
+    ZSTD_memcpy(out + 1, rawData, rawDataSize);
+    
+    return dataSize;
+}
+
+size_t FSE_writeNCount_generic (void* header, size_t headerBufferSize,
+                   const short* normalizedCounter, unsigned maxSymbolValue, unsigned tableLog,
+                         unsigned writeIsSafe, unsigned useLowProbCount)
+{
+#if ZSTD_ZBIC_SUPPORT
+    return FSE_writeNCount_bic(header, headerBufferSize, normalizedCounter, maxSymbolValue, tableLog, writeIsSafe, useLowProbCount);
+#else
+    (void)useLowProbCount;
+    return FSE_writeNCount_normal(header, headerBufferSize, normalizedCounter, maxSymbolValue, tableLog, writeIsSafe);
+#endif
+}
 
 size_t FSE_writeNCount (void* buffer, size_t bufferSize,
-                  const short* normalizedCounter, unsigned maxSymbolValue, unsigned tableLog)
+                  const short* normalizedCounter, unsigned maxSymbolValue, unsigned tableLog,
+                        unsigned useLowProbCount)
 {
     if (tableLog > FSE_MAX_TABLELOG) return ERROR(tableLog_tooLarge);   /* Unsupported */
     if (tableLog < FSE_MIN_TABLELOG) return ERROR(GENERIC);   /* Unsupported */
 
     if (bufferSize < FSE_NCountWriteBound(maxSymbolValue, tableLog))
-        return FSE_writeNCount_generic(buffer, bufferSize, normalizedCounter, maxSymbolValue, tableLog, 0);
+        return FSE_writeNCount_generic(buffer, bufferSize, normalizedCounter, maxSymbolValue, tableLog, 0, useLowProbCount);
 
-    return FSE_writeNCount_generic(buffer, bufferSize, normalizedCounter, maxSymbolValue, tableLog, 1 /* write in buffer is safe */);
+    return FSE_writeNCount_generic(buffer, bufferSize, normalizedCounter, maxSymbolValue, tableLog, 1 /* write in buffer is safe */, useLowProbCount);
 }
-
 
 /*-**************************************************************
 *  FSE Compression Code

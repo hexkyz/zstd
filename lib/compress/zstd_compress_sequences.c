@@ -74,7 +74,7 @@ static size_t ZSTD_NCountCost(unsigned const* count, unsigned const max,
     S16 norm[MaxSeq + 1];
     const U32 tableLog = FSE_optimalTableLog(FSELog, nbSeq, max);
     FORWARD_IF_ERROR(FSE_normalizeCount(norm, tableLog, count, nbSeq, max, ZSTD_useLowProbCount(nbSeq)), "");
-    return FSE_writeNCount(wksp, sizeof(wksp), norm, max, tableLog);
+    return FSE_writeNCount(wksp, sizeof(wksp), norm, max, tableLog, ZSTD_useLowProbCount(nbSeq));
 }
 
 /**
@@ -277,7 +277,7 @@ ZSTD_buildCTable(void* dst, size_t dstCapacity,
         (void)entropyWorkspaceSize;
         FORWARD_IF_ERROR(FSE_normalizeCount(wksp->norm, tableLog, count, nbSeq_1, max, ZSTD_useLowProbCount(nbSeq_1)), "FSE_normalizeCount failed");
         assert(oend >= op);
-        {   size_t const NCountSize = FSE_writeNCount(op, (size_t)(oend - op), wksp->norm, max, tableLog);   /* overflow protected */
+        {   size_t const NCountSize = FSE_writeNCount(op, (size_t)(oend - op), wksp->norm, max, tableLog, ZSTD_useLowProbCount(nbSeq_1));   /* overflow protected */
             FORWARD_IF_ERROR(NCountSize, "FSE_writeNCount failed");
             FORWARD_IF_ERROR(FSE_buildCTable_wksp(nextCTable, wksp->norm, max, tableLog, wksp->wksp, sizeof(wksp->wksp)), "FSE_buildCTable_wksp failed");
             return NCountSize;

@@ -10,6 +10,7 @@
 
 #include <stdio.h>     // printf
 #include <stdlib.h>    // free
+#include <string.h>    // strlen, strcat, memset
 #define ZSTD_STATIC_LINKING_ONLY
 #define ZSTD_ZBIC_SUPPORT 1
 #include <zstd.h>      // presumes zstd library is installed
@@ -26,36 +27,19 @@ static char* createOutFilename_orDie(const char* filename)
     return (char*)outSpace;
 }
 
-static void decompress(const char* fname, const char* oname)
+static void compress(const char* fname, const char* oname)
 {
-    size_t cSize;
-    void* const cBuff = mallocAndLoadFile_orDie(fname, &cSize);
+    size_t fSize;
+    void* const fBuff = mallocAndLoadFile_orDie(fname, &fSize);
     
-    size_t margin = ZSTD_decompressionMargin(cBuff, cSize);
+    size_t const cBuffSize = ZSTD_compressBound(fSize);
+    void* const cBuff = malloc_orDie(cBuffSize);
     
-    if (!ZSTD_isError(margin)) {
-        size_t DCtxWorkspaceSize = ZSTD_estimateDCtxSize();
-        
-        void* const workspace = malloc(DCtxWorkspaceSize);
-        ZSTD_DCtx* dctx = ZSTD_initStaticDCtx(workspace, DCtxWorkspaceSize);
-        
-        size_t dSize = cSize*4;
-        void* const dBuff = malloc(dSize);
-        
-        size_t dec_size = ZSTD_decompressDCtx(dctx, dBuff, dSize, cBuff, cSize);
-        
-        if (!ZSTD_isError(dec_size)) {
-            saveFile_orDie(oname, dBuff, dec_size);
-        } else {
-            printf("ZSTD_decompressDCtx failed!\n");
-        }
-        
-        free(dBuff);
-        free(workspace);
-    } else {
-        printf("ZSTD_decompressionMargin failed!\n");
-    }
+    size_t const cSize = ZSTD_compress(cBuff, cBuffSize, fBuff, fSize, 3);
     
+    saveFile_orDie(oname, cBuff, cSize);
+
+    free(fBuff);
     free(cBuff);
 }
 
@@ -69,11 +53,11 @@ int main(int argc, const char** argv)
         printf("%s FILE\n", exeName);
         return 1;
     }
-    
+
     const char* const inFilename = argv[1];
 
     char* const outFilename = createOutFilename_orDie(inFilename);
-    decompress(inFilename, outFilename);
+    compress(inFilename, outFilename);
     free(outFilename);
     return 0;
 }

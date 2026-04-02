@@ -783,7 +783,7 @@ static size_t ZDICT_analyzeEntropy(void*  dstBuffer, size_t maxDstSize,
         eSize += hhSize;
     }
 
-    {   size_t const ohSize = FSE_writeNCount(dstPtr, maxDstSize, offcodeNCount, OFFCODE_MAX, Offlog);
+    {   size_t const ohSize = FSE_writeNCount(dstPtr, maxDstSize, offcodeNCount, OFFCODE_MAX, Offlog, 0);
         if (FSE_isError(ohSize)) {
             eSize = ohSize;
             DISPLAYLEVEL(1, "FSE_writeNCount error with offcodeNCount \n");
@@ -794,7 +794,7 @@ static size_t ZDICT_analyzeEntropy(void*  dstBuffer, size_t maxDstSize,
         eSize += ohSize;
     }
 
-    {   size_t const mhSize = FSE_writeNCount(dstPtr, maxDstSize, matchLengthNCount, MaxML, mlLog);
+    {   size_t const mhSize = FSE_writeNCount(dstPtr, maxDstSize, matchLengthNCount, MaxML, mlLog, 0);
         if (FSE_isError(mhSize)) {
             eSize = mhSize;
             DISPLAYLEVEL(1, "FSE_writeNCount error with matchLengthNCount \n");
@@ -805,7 +805,7 @@ static size_t ZDICT_analyzeEntropy(void*  dstBuffer, size_t maxDstSize,
         eSize += mhSize;
     }
 
-    {   size_t const lhSize = FSE_writeNCount(dstPtr, maxDstSize, litLengthNCount, MaxLL, llLog);
+    {   size_t const lhSize = FSE_writeNCount(dstPtr, maxDstSize, litLengthNCount, MaxLL, llLog, 0);
         if (FSE_isError(lhSize)) {
             eSize = lhSize;
             DISPLAYLEVEL(1, "FSE_writeNCount error with litlengthNCount \n");

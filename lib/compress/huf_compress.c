@@ -171,7 +171,7 @@ HUF_compressWeights(void* dst, size_t dstSize,
     CHECK_F( FSE_normalizeCount(wksp->norm, tableLog, wksp->count, wtSize, maxSymbolValue, /* useLowProbCount */ 0) );
 
     /* Write table description header */
-    {   CHECK_V_F(hSize, FSE_writeNCount(op, (size_t)(oend-op), wksp->norm, maxSymbolValue, tableLog) );
+    {   CHECK_V_F(hSize, FSE_writeNCount(op, (size_t)(oend-op), wksp->norm, maxSymbolValue, tableLog, /* useLowProbCount */ 0) );
         op += hSize;
     }
 
