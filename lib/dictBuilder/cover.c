@@ -21,12 +21,14 @@
 /*-*************************************
 *  Dependencies
 ***************************************/
-/* qsort_r is an extension. */
-#if defined(__linux) || defined(__linux__) || defined(linux) || defined(__gnu_linux__) || \
-    defined(__CYGWIN__) || defined(__MSYS__)
-#if !defined(_GNU_SOURCE) && !defined(__ANDROID__) /* NDK doesn't ship qsort_r(). */
-#define _GNU_SOURCE
-#endif
+/* qsort_r is an extension.
+ *
+ * Android NDK does not ship qsort_r().
+ */
+#if (defined(__linux__) && !defined(__ANDROID__)) || defined(__CYGWIN__) || defined(__MSYS__)
+# ifndef _GNU_SOURCE
+#   define _GNU_SOURCE
+# endif
 #endif
 
 #include <stdio.h>  /* fprintf */
@@ -328,7 +330,7 @@ static void stableSort(COVER_ctx_t *ctx) {
     qsort_r(ctx->suffix, ctx->suffixSize, sizeof(U32),
             ctx,
             (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp));
-#elif defined(_GNU_SOURCE)
+#elif (defined(__linux__) && !defined(__ANDROID__)) || defined(__CYGWIN__) || defined(__MSYS__)
     qsort_r(ctx->suffix, ctx->suffixSize, sizeof(U32),
             (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp),
             ctx);
