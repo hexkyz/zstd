@@ -31,6 +31,8 @@
 # endif
 #endif
 
+#define __STDC_WANT_LIB_EXT1__ 1 /* request C11 Annex K, which includes qsort_s() */
+
 #include <stdio.h>  /* fprintf */
 #include <stdlib.h> /* malloc, free, qsort_r */
 
@@ -41,6 +43,7 @@
 #  define ZDICT_STATIC_LINKING_ONLY
 #endif
 
+#include "../common/debug.h" /* DEBUG_STATIC_ASSERT */
 #include "../common/mem.h" /* read */
 #include "../common/pool.h" /* POOL_ctx */
 #include "../common/threading.h" /* ZSTD_pthread_mutex_t */
@@ -61,6 +64,31 @@
 */
 #define COVER_MAX_SAMPLES_SIZE (sizeof(size_t) == 8 ? ((unsigned)-1) : ((unsigned)1 GB))
 #define COVER_DEFAULT_SPLITPOINT 1.0
+
+/**
+ * Select the qsort() variant used by cover
+ */
+#define ZDICT_QSORT_MIN 0
+#define ZDICT_QSORT_C90 ZDICT_QSORT_MIN
+#define ZDICT_QSORT_GNU 1
+#define ZDICT_QSORT_APPLE 2
+#define ZDICT_QSORT_MSVC 3
+#define ZDICT_QSORT_C11 ZDICT_QSORT_MAX
+#define ZDICT_QSORT_MAX 4
+
+#ifndef ZDICT_QSORT
+# if defined(__APPLE__)
+#   define ZDICT_QSORT ZDICT_QSORT_APPLE /* uses qsort_r() with a different order for parameters */
+# elif (defined(__linux__) && !defined(__ANDROID__)) || defined(__CYGWIN__) || defined(__MSYS__)
+#   define ZDICT_QSORT ZDICT_QSORT_GNU /* uses qsort_r() */
+# elif defined(_WIN32) && defined(_MSC_VER)
+#   define ZDICT_QSORT ZDICT_QSORT_MSVC /* uses qsort_s() with a different order for parameters */
+# elif defined(STDC_LIB_EXT1) && (STDC_LIB_EXT1 > 0) /* C11 Annex K */
+#   define ZDICT_QSORT ZDICT_QSORT_C11 /* uses qsort_s() */
+# else
+#   define ZDICT_QSORT ZDICT_QSORT_C90 /* uses standard qsort() which is not re-entrant (requires global variable) */
+# endif
+#endif
 
 /*-*************************************
 *  Console display
@@ -243,8 +271,8 @@ typedef struct {
   unsigned d;
 } COVER_ctx_t;
 
-#if !defined(_GNU_SOURCE) && !defined(__APPLE__) && !defined(_MSC_VER)
-/* C90 only offers qsort() that needs a global context. */
+#if ZDICT_QSORT == ZDICT_QSORT_C90
+/* Use global context for non-reentrant sort functions */
 static COVER_ctx_t *g_coverCtx = NULL;
 #endif
 
@@ -290,9 +318,9 @@ static int COVER_cmp8(COVER_ctx_t *ctx, const void *lp, const void *rp) {
 /**
  * Same as COVER_cmp() except ties are broken by pointer value
  */
-#if (defined(_WIN32) && defined(_MSC_VER)) || defined(__APPLE__)
+#if (ZDICT_QSORT == ZDICT_QSORT_MSVC) || (ZDICT_QSORT == ZDICT_QSORT_APPLE)
 static int WIN_CDECL COVER_strict_cmp(void* g_coverCtx, const void* lp, const void* rp) {
-#elif defined(_GNU_SOURCE)
+#elif (ZDICT_QSORT == ZDICT_QSORT_GNU) || (ZDICT_QSORT == ZDICT_QSORT_C11)
 static int COVER_strict_cmp(const void *lp, const void *rp, void *g_coverCtx) {
 #else /* C90 fallback.*/
 static int COVER_strict_cmp(const void *lp, const void *rp) {
@@ -306,9 +334,9 @@ static int COVER_strict_cmp(const void *lp, const void *rp) {
 /**
  * Faster version for d <= 8.
  */
-#if (defined(_WIN32) && defined(_MSC_VER)) || defined(__APPLE__)
+#if (ZDICT_QSORT == ZDICT_QSORT_MSVC) || (ZDICT_QSORT == ZDICT_QSORT_APPLE)
 static int WIN_CDECL COVER_strict_cmp8(void* g_coverCtx, const void* lp, const void* rp) {
-#elif defined(_GNU_SOURCE)
+#elif (ZDICT_QSORT == ZDICT_QSORT_GNU) || (ZDICT_QSORT == ZDICT_QSORT_C11)
 static int COVER_strict_cmp8(const void *lp, const void *rp, void *g_coverCtx) {
 #else /* C90 fallback.*/
 static int COVER_strict_cmp8(const void *lp, const void *rp) {
@@ -325,26 +353,28 @@ static int COVER_strict_cmp8(const void *lp, const void *rp) {
  * Hopefully when C11 become the norm, we will be able
  * to clean it up.
  */
-static void stableSort(COVER_ctx_t *ctx) {
-#if defined(__APPLE__)
+static void stableSort(COVER_ctx_t *ctx)
+{
+    DEBUG_STATIC_ASSERT(ZDICT_QSORT_MIN <= ZDICT_QSORT && ZDICT_QSORT <= ZDICT_QSORT_MAX);
+#if (ZDICT_QSORT == ZDICT_QSORT_APPLE)
     qsort_r(ctx->suffix, ctx->suffixSize, sizeof(U32),
             ctx,
             (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp));
-#elif (defined(__linux__) && !defined(__ANDROID__)) || defined(__CYGWIN__) || defined(__MSYS__)
+#elif (ZDICT_QSORT == ZDICT_QSORT_GNU)
     qsort_r(ctx->suffix, ctx->suffixSize, sizeof(U32),
             (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp),
             ctx);
-#elif defined(_WIN32) && defined(_MSC_VER)
+#elif (ZDICT_QSORT == ZDICT_QSORT_MSVC)
     qsort_s(ctx->suffix, ctx->suffixSize, sizeof(U32),
             (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp),
             ctx);
-#elif defined(__OpenBSD__)
-    g_coverCtx = ctx;
-    mergesort(ctx->suffix, ctx->suffixSize, sizeof(U32),
-          (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp));
+#elif (ZDICT_QSORT == ZDICT_QSORT_C11)
+    qsort_s(ctx->suffix, ctx->suffixSize, sizeof(U32),
+            (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp),
+            ctx);
 #else /* C90 fallback.*/
     g_coverCtx = ctx;
-    /* TODO(cavalcanti): implement a reentrant qsort() when is not available. */
+    /* TODO(cavalcanti): implement a reentrant qsort() when _r is not available. */
     qsort(ctx->suffix, ctx->suffixSize, sizeof(U32),
           (ctx->d <= 8 ? &COVER_strict_cmp8 : &COVER_strict_cmp));
 #endif
